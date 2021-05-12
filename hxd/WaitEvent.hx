@@ -41,8 +41,17 @@ class WaitEvent {
 		updateList.push(tmp);
 	}
 
-	public function waitUntil( callb ) {
-		updateList.push(callb);
+	public function waitUntil(  time : Float, everyFrame : (dt: Float, time: Float) -> Void, finished : Void -> Void) {
+		function tmp(dt:Float) {
+			time -= dt;
+			if( time < 0 ) {
+				finished();
+				return true;
+			}
+			everyFrame(dt, time);
+			return false;
+		}
+		updateList.push(tmp);
 	}
 
 	public function update(dt:Float) {

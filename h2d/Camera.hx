@@ -88,7 +88,7 @@ class Camera {
 	/**
 		Makes camera to follow the referenced target position.
 	**/
-	public var follow : Dynamic;
+	public var follow : {x: Float, y: Float, rotation: Float};
 	/**
 		Enables `h2d.Object.rotation` sync between `Camera.follow` object and Camera.
 	**/
@@ -98,9 +98,13 @@ class Camera {
 	**/
 	public var followLerp(default, set): Float;
 	/**
-		Offset the camera from follow target position.
+		Offset the camera according to follow target.
 	**/
 	public var followOffset : {x: Float, y: Float};
+	/**
+		Camera movement boundary.
+	**/
+	public var followBoundary : {minX: Float, minY: Float, maxX: Float, maxY: Float};
 
 	var posChanged : Bool;
 
@@ -133,8 +137,15 @@ class Camera {
 		this.viewX = 0; this.viewY = 0;
 		this.viewW = 1; this.viewH = 1;
 		this.visible = true;
-		this.followLerp = 1.0;
+		this.followLerp = 0.2;
 		if (scene != null) scene.addCamera(this);
+	}
+
+	public inline function bodyOutside(body: engine.components.Body): Bool {
+		return body.x > x + Const.HALF_WIDTH || 
+		body.x + body.width < x - Const.HALF_WIDTH ||
+		body.y > y + Const.HALF_HEIGHT ||
+		body.y + body.height < y - Const.HALF_HEIGHT;
 	}
 
 	/**
@@ -223,10 +234,26 @@ class Camera {
 				fy += followOffset.y;
 			}
 
-			this.x += (fx - this.x) * followLerp;
-			this.y += (fy - this.y) * followLerp;
-			if ( followRotation ) this.rotation = -follow.rotation;
+			x = hxd.Math.lerpTime(x, fx, followLerp, hxd.Timer.dt);
+			if(scaleY > 1 ) y = hxd.Math.lerpTime(y, fy, followLerp, hxd.Timer.dt);
+			if ( followRotation ) rotation = -follow.rotation;
 		}
+
+		if( followBoundary != null ) {
+			final offX = viewportWidth / 3 * (scaleX - 1);
+			final offY = viewportHeight / 3 * (scaleY - 1);
+			final minX =  followBoundary.minX - offX;
+			final maxX =  followBoundary.maxX + offX;
+			final minY =  followBoundary.minY - offY;
+			final maxY =  followBoundary.maxY + offY;
+
+			if( x < minX) x = minX;
+			else if( x > maxX) x = maxX;
+		
+			if( y < minY) y = minY;
+			else if( y > maxY) y = maxY;
+		}
+
 		if ( posChanged || force ) {
 			if ( rotation == 0 ) {
 				matA = scaleX;

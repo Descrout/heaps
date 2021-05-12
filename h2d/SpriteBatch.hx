@@ -97,6 +97,9 @@ class BatchElement {
 	var prev : BatchElement;
 	var next : BatchElement;
 
+	public var absX(get, null): Float;
+	public var absY(get, null): Float;
+
 	/**
 		Create a new BatchElement instance with provided Tile.
 		@param t The tile used to render this BatchElement.
@@ -115,6 +118,14 @@ class BatchElement {
 
 	inline function set_alpha(v) {
 		return a = v;
+	}
+
+	inline function get_absX() {
+		return x + batch.x;
+	}
+
+	inline function get_absY() {
+		return y + batch.y;
 	}
 
 	/**
