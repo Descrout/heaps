@@ -29,7 +29,7 @@ class WaitEvent {
 		return false;
 	}
 
-	public function wait( time : Float, callb ) {
+	public function wait( time : Float, callb:  Void -> Void ) {
 		function tmp(dt:Float) {
 			time -= dt;
 			if( time < 0 ) {
@@ -41,11 +41,22 @@ class WaitEvent {
 		updateList.push(tmp);
 	}
 
-	public function waitUntil(  time : Float, everyFrame : (dt: Float, time: Float) -> Void, finished : Void -> Void) {
+	public function waitUntil( callb:  Float -> Bool ,?finished : Void -> Void ) {
+		function tmp(dt:Float) {
+			if(callb(dt)) {
+				if(finished != null) finished();
+				return true;
+			}
+			return false;
+		}
+		updateList.push(tmp);
+	}
+
+	public function waitAndDo(  time : Float, everyFrame : (dt: Float, time: Float) -> Void, ?finished : Void -> Void) {
 		function tmp(dt:Float) {
 			time -= dt;
 			if( time < 0 ) {
-				finished();
+				if(finished != null) finished();
 				return true;
 			}
 			everyFrame(dt, time);
