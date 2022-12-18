@@ -1,4 +1,5 @@
 package h2d;
+import h2d.impl.BatchDrawState;
 import hxd.Math;
 import hxd.impl.Allocator;
 
@@ -30,8 +31,9 @@ private class GraphicsContent extends h3d.prim.Primitive {
 
 	var tmp : hxd.FloatBuffer;
 	var index : hxd.IndexBuffer;
+	var state : BatchDrawState;
 
-	var buffers : Array<{ buf : hxd.FloatBuffer, vbuf : h3d.Buffer, idx : hxd.IndexBuffer, ibuf : h3d.Indexes }>;
+	var buffers : Array<{ buf : hxd.FloatBuffer, vbuf : h3d.Buffer, idx : hxd.IndexBuffer, ibuf : h3d.Indexes, state : BatchDrawState }>;
 	var bufferDirty : Bool;
 	var indexDirty : Bool;
 	#if track_alloc
@@ -40,6 +42,7 @@ private class GraphicsContent extends h3d.prim.Primitive {
 
 	public function new() {
 		buffers = [];
+		state = new BatchDrawState();
 		#if track_alloc
 		this.allocPos = new hxd.impl.AllocPos();
 		#end
@@ -47,6 +50,7 @@ private class GraphicsContent extends h3d.prim.Primitive {
 
 	public inline function addIndex(i) {
 		index.push(i);
+		state.add(1);
 		indexDirty = true;
 	}
 
@@ -62,13 +66,20 @@ private class GraphicsContent extends h3d.prim.Primitive {
 		bufferDirty = true;
 	}
 
+	public function setTile( tile : h2d.Tile ) {
+		state.setTile(tile);
+	}
+
 	public function next() {
 		var nvect = tmp.length >> 3;
 		if( nvect < 1 << 15 )
 			return false;
-		buffers.push( { buf : tmp, idx : index, vbuf : null, ibuf : null } );
+		buffers.push( { buf : tmp, idx : index, vbuf : null, ibuf : null, state: state } );
 		tmp = new hxd.FloatBuffer();
 		index = new hxd.IndexBuffer();
+		var tex = state.currentTexture;
+		state = new BatchDrawState();
+		state.setTexture(tex);
 		super.dispose();
 		return true;
 	}
@@ -89,12 +100,11 @@ private class GraphicsContent extends h3d.prim.Primitive {
 		indexDirty = false;
 	}
 
-	override function render( engine : h3d.Engine ) {
-		if (index.length <= 0) return ;
+	public function doRender( ctx : h2d.RenderContext ) {
+		if ( index.length == 0 ) return;
 		flush();
-		for( b in buffers )
-			engine.renderIndexed(b.vbuf, b.ibuf);
-		super.render(engine);
+		for ( b in buffers ) b.state.drawIndexed(ctx, b.vbuf, b.ibuf);
+		state.drawIndexed(ctx, buffer, indexes);
 	}
 
 	public function flush() {
@@ -121,6 +131,7 @@ private class GraphicsContent extends h3d.prim.Primitive {
 			if( b.ibuf != null ) Allocator.get().disposeIndexBuffer(b.ibuf);
 			b.vbuf = null;
 			b.ibuf = null;
+			b.state.clear();
 		}
 
 		if( buffer != null ) {
@@ -131,6 +142,7 @@ private class GraphicsContent extends h3d.prim.Primitive {
 			Allocator.get().disposeIndexBuffer(indexes);
 			indexes = null;
 		}
+		state.clear();
 
 		super.dispose();
 	}
@@ -174,6 +186,10 @@ class Graphics extends Drawable {
 	var yMin : Float;
 	var xMax : Float;
 	var yMax : Float;
+	var xMinSize : Float;
+	var yMinSize : Float;
+	var xMaxSize : Float;
+	var yMaxSize : Float;
 
 	var ma : Float = 1.;
 	var mb : Float = 0.;
@@ -222,11 +238,18 @@ class Graphics extends Drawable {
 		yMin = Math.POSITIVE_INFINITY;
 		yMax = Math.NEGATIVE_INFINITY;
 		xMax = Math.NEGATIVE_INFINITY;
+		xMinSize = Math.POSITIVE_INFINITY;
+		yMinSize = Math.POSITIVE_INFINITY;
+		yMaxSize = Math.NEGATIVE_INFINITY;
+		xMaxSize = Math.NEGATIVE_INFINITY;
 	}
 
 	override function getBoundsRec( relativeTo, out, forSize ) {
 		super.getBoundsRec(relativeTo, out, forSize);
-		if( tile != null ) addBounds(relativeTo, out, xMin, yMin, xMax - xMin, yMax - yMin);
+		if( tile != null ) {
+			if( forSize ) addBounds(relativeTo, out, xMinSize, yMinSize, xMaxSize - xMinSize, yMaxSize - yMinSize);
+			else addBounds(relativeTo, out, xMin, yMin, xMax - xMin, yMax - yMin);
+		}
 	}
 
 	function isConvex( points : Array<GPoint> ) {
@@ -251,6 +274,7 @@ class Graphics extends Drawable {
 		var prev = pts[last];
 		var p = pts[0];
 
+		content.setTile(h2d.Tile.fromColor(0xFFFFFF));
 		var closed = p.x == prev.x && p.y == prev.y;
 		var count = pts.length;
 		if( !closed ) {
@@ -369,6 +393,7 @@ class Graphics extends Drawable {
 			prev = p;
 			p = next;
 		}
+		content.setTile(tile);
 	}
 
 	static var EARCUT = null;
@@ -431,6 +456,8 @@ class Graphics extends Drawable {
 	**/
 	public function beginFill( color : Int = 0, alpha = 1.  ) {
 		flush();
+		tile = h2d.Tile.fromColor(0xFFFFFF);
+		content.setTile(tile);
 		setColor(color,alpha);
 		doFill = true;
 	}
@@ -453,22 +480,18 @@ class Graphics extends Drawable {
 		Previous tile is remembered across `Graphics.clear` calls.
 	**/
 	public function beginTileFill( ?dx : Float, ?dy : Float, ?scaleX : Float, ?scaleY : Float, ?tile : h2d.Tile ) {
-		beginFill(0xFFFFFF);
+		if ( tile == null )
+			tile = this.tile;
+		if ( tile == null )
+			throw "Tile not specified";
+		flush();
+		this.tile = tile;
+		content.setTile(tile);
+		setColor(0xFFFFFF);
+		doFill = true;
+
 		if( dx == null ) dx = 0;
 		if( dy == null ) dy = 0;
-		if( tile != null ) {
-			if( this.tile != null && tile.getTexture() != this.tile.getTexture() ) {
-				var tex = this.tile.getTexture();
-				if( tex.width != 1 || tex.height != 1 )
-					throw "All tiles must be of the same texture";
-				this.tile = tile;
-			}
-			if( this.tile == null  )
-				this.tile = tile;
-		} else
-			tile = this.tile;
-		if( tile == null )
-			throw "Tile not specified";
 		if( scaleX == null ) scaleX = 1;
 		if( scaleY == null ) scaleY = 1;
 		dx -= tile.x;
@@ -820,10 +843,15 @@ class Graphics extends Drawable {
 		@param v Normalized vertical Texture position from the current Tile fill operation.
 	**/
 	public function addVertex( x : Float, y : Float, r : Float, g : Float, b : Float, a : Float, u : Float = 0., v : Float = 0. ) {
-		if( x < xMin ) xMin = x;
-		if( y < yMin ) yMin = y;
-		if( x > xMax ) xMax = x;
-		if( y > yMax ) yMax = y;
+		var half = lineSize / 2.0;
+		if( x - half < xMin ) xMin = x - half;
+		if( y - half < yMin ) yMin = y - half;
+		if( x + half > xMax ) xMax = x + half;
+		if( y + half > yMax ) yMax = y + half;
+		if( x < xMinSize ) xMinSize = x;
+		if( y < yMinSize ) yMinSize = y;
+		if( x > xMaxSize ) xMaxSize = x;
+		if( y > yMaxSize ) yMaxSize = y;
 		if( doFill )
 			content.add(x, y, u, v, r, g, b, a);
 		var gp = new GPoint();
@@ -832,8 +860,8 @@ class Graphics extends Drawable {
 	}
 
 	override function draw(ctx:RenderContext) {
-		if( !ctx.beginDrawObject(this, tile.getTexture()) ) return;
-		content.render(ctx.engine);
+		if( !ctx.beginDrawBatchState(this) ) return;
+		content.doRender(ctx);
 	}
 
 	override function sync(ctx:RenderContext) {

@@ -10,7 +10,7 @@ class DirectXDriver extends h3d.impl.Driver {
 
 }
 
-#elseif hldx
+#elseif (hldx && !dx12)
 
 import h3d.impl.Driver;
 import dx.Driver;
@@ -69,8 +69,11 @@ class DirectXDriver extends h3d.impl.Driver {
 	static inline var RECTS_ELTS = 4 * NTARGETS;
 	static inline var BLEND_FACTORS = NTARGETS;
 
-	public static var CACHE_FILE : String = null;
+	public static var CACHE_FILE : { input : String, output : String } = null;
 	var cacheFileData : Map<String,haxe.io.Bytes>;
+	#if debug_shader_cache
+	var cacheFileDebugData = new Map<String, String>();
+	#end
 
 	var driver : DriverInstance;
 	var shaders : Map<Int,CompiledShader>;
@@ -761,8 +764,8 @@ class DirectXDriver extends h3d.impl.Driver {
 		if( CACHE_FILE != null ) {
 			if( cacheFileData == null ) {
 				cacheFileData = new Map();
-				try {
-					var cache = new haxe.io.BytesInput(sys.io.File.getBytes(CACHE_FILE));
+				function loadCacheData( file : String ) {
+					var cache = new haxe.io.BytesInput(sys.io.File.getBytes(file));
 					while( cache.position < cache.length ) {
 						var len = cache.readInt32();
 						if( len < 0 || len > 4<<20 ) break;
@@ -772,10 +775,21 @@ class DirectXDriver extends h3d.impl.Driver {
 						if( len < 0 || len > 4<<20 ) break;
 						var str = cache.readString(len);
 						cacheFileData.set(key,haxe.crypto.Base64.decode(str));
+						#if debug_shader_cache
+						var peek = @:privateAccess cache.b[cache.position];
+						if(peek != '\n'.code) {
+							cache.readByte(); // skip null marker
+							var len = cache.readInt32();
+							if( len < 0 || len > 4<<20 ) break;
+							var code = cache.readString(len);
+							cacheFileDebugData.set(key, code);
+						}
+						#end
 						cache.readByte(); // newline
 					}
-				} catch( e : Dynamic ) {
 				}
+				try loadCacheData(CACHE_FILE.input) catch( e : Dynamic ) {};
+				if( CACHE_FILE.output != CACHE_FILE.input ) try loadCacheData(CACHE_FILE.output) catch( e : Dynamic ) {};
 			}
 			var bytes = cacheFileData.get(shaderVersion + haxe.crypto.Md5.encode(code));
 			if( bytes != null ) {
@@ -797,7 +811,9 @@ class DirectXDriver extends h3d.impl.Driver {
 		var h = new hxsl.HlslOut();
 		if( shader.code == null ){
 			shader.code = h.run(shader.data);
+			#if !heaps_compact_mem
 			shader.data.funs = null;
+			#end
 		}
 		var bytes = getBinaryPayload(shader.vertex, shader.code);
 		if( bytes == null ) {
@@ -825,8 +841,11 @@ class DirectXDriver extends h3d.impl.Driver {
 			var key = shaderVersion + haxe.crypto.Md5.encode(shader.code);
 			if( cacheFileData.get(key) != bytes ) {
 				cacheFileData.set(key, bytes);
+				#if debug_shader_cache
+				cacheFileDebugData.set(key, shader.code.split('\n').join('\\n'));
+				#end
 				if( CACHE_FILE != null ) {
-					var out = sys.io.File.write(CACHE_FILE);
+					var out = new haxe.io.BytesOutput();
 					var keys = Lambda.array({ iterator : cacheFileData.keys });
 					keys.sort(Reflect.compare);
 					for( key in keys ) {
@@ -835,9 +854,17 @@ class DirectXDriver extends h3d.impl.Driver {
 						var b64 = haxe.crypto.Base64.encode(cacheFileData.get(key));
 						out.writeInt32(b64.length);
 						out.writeString(b64);
+						#if debug_shader_cache
+						var s = cacheFileDebugData.get(key);
+						if(s != null) {
+							out.writeByte(0);
+							out.writeInt32(s.length);
+							out.writeString(s);
+						}
+						#end
 						out.writeByte('\n'.code);
 					}
-					out.close();
+					try sys.io.File.saveBytes(CACHE_FILE.output, out.getBytes()) catch( e : Dynamic ) {};
 				}
 			}
 		}
@@ -848,6 +875,15 @@ class DirectXDriver extends h3d.impl.Driver {
 		ctx.paramsContent = new hl.Bytes(shader.paramsSize * 16);
 		ctx.paramsContent.fill(0, shader.paramsSize * 16, 0xDD);
 		ctx.texturesCount = shader.texturesCount;
+
+		var p = shader.textures;
+		while( p != null ) {
+			switch( p.type ) {
+			case TArray( TSampler2D , SConst(n) ): ctx.textures2DCount = n;
+			default:
+			}
+			p = p.next;
+		}
 		ctx.bufferCount = shader.bufferCount;
 		ctx.globals = dx.Driver.createBuffer(shader.globalsSize * 16, Dynamic, ConstantBuffer, CpuWrite, None, 0, null);
 		ctx.params = dx.Driver.createBuffer(shader.paramsSize * 16, Dynamic, ConstantBuffer, CpuWrite, None, 0, null);
@@ -888,8 +924,14 @@ class DirectXDriver extends h3d.impl.Driver {
 	override function copyTexture(from:h3d.mat.Texture, to:h3d.mat.Texture) {
 		if( from.t == null || from.format != to.format || from.width != to.width || from.height != to.height || from.layerCount != to.layerCount )
 			return false;
-		if( to.t == null )
+		if( to.t == null ) {
+			var prev = from.lastFrame;
+			from.preventAutoDispose();
 			to.alloc();
+			from.lastFrame = prev;
+			if( from.t == null ) throw "assert";
+			if( to.t == null ) return false;
+		}
 		to.t.res.copyResource(from.t.res);
 		to.flags.set(WasCleared);
 		return true;
@@ -1312,8 +1354,10 @@ class DirectXDriver extends h3d.impl.Driver {
 			#else
 			dx.Driver.drawIndexedInstanced(commands.indexCount, commands.commandCount, commands.startIndex, 0, 0);
 			#end
-		} else
-			dx.Driver.drawIndexedInstancedIndirect(commands.data, 0);
+		} else {
+			for( i in 0...commands.commandCount )
+				dx.Driver.drawIndexedInstancedIndirect(commands.data,i * 20);
+		}
 	}
 
 	static var COMPARE : Array<ComparisonFunc> = [

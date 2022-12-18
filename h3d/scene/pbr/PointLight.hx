@@ -3,7 +3,7 @@ package h3d.scene.pbr;
 class PointLight extends Light {
 
 	var pbr : h3d.shader.pbr.Light.PointLight;
-	public var size : Float;
+	public var size : Float = 0.;
 	public var zNear : Float = 0.02;
 	/**
 		Alias for uniform scale.
@@ -27,7 +27,13 @@ class PointLight extends Light {
 	}
 
 	function get_range() {
-		return scaleX;
+		var minScale = 1.0;
+		var p = parent;
+		while (p != null) {
+			minScale *= hxd.Math.min(p.scaleX, hxd.Math.min(p.scaleY, p.scaleZ));
+			p = p.parent;
+		}
+		return scaleX * minScale;
 	}
 
 	function set_range(v:Float) {

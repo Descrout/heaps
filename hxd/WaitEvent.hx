@@ -1,8 +1,7 @@
 package hxd;
 
 class WaitEvent {
-
-	var updateList : Array<Float -> Bool> ;
+	var updateList:Array<Float->Bool>;
 
 	public function new() {
 		updateList = [];
@@ -16,23 +15,23 @@ class WaitEvent {
 		updateList = [];
 	}
 
-	public function add( callb ) {
+	public function add(callb) {
 		updateList.push(callb);
 	}
 
-	public function remove( callb : Float->Bool ) {
-		for( e in updateList )
-			if( Reflect.compareMethods(e, callb) ) {
+	public function remove(callb:Float->Bool) {
+		for (e in updateList)
+			if (Reflect.compareMethods(e, callb)) {
 				updateList.remove(e);
 				return true;
 			}
 		return false;
 	}
 
-	public function wait( time : Float, callb:  Void -> Void ) {
+	public function wait(time:Float, callb:Void->Void) {
 		function tmp(dt:Float) {
 			time -= dt;
-			if( time < 0 ) {
+			if (time < 0) {
 				callb();
 				return true;
 			}
@@ -41,10 +40,11 @@ class WaitEvent {
 		updateList.push(tmp);
 	}
 
-	public function waitUntil( callb:  Float -> Bool ,?finished : Void -> Void ) {
+	public function waitUntil(callb:Float->Bool, ?finished:Void->Void) {
 		function tmp(dt:Float) {
-			if(callb(dt)) {
-				if(finished != null) finished();
+			if (callb(dt)) {
+				if (finished != null)
+					finished();
 				return true;
 			}
 			return false;
@@ -52,11 +52,12 @@ class WaitEvent {
 		updateList.push(tmp);
 	}
 
-	public function waitAndDo(  time : Float, everyFrame : (dt: Float, time: Float) -> Void, ?finished : Void -> Void) {
+	public function waitAndDo(time:Float, everyFrame:(dt:Float, time:Float) -> Void, ?finished:Void->Void) {
 		function tmp(dt:Float) {
 			time -= dt;
-			if( time < 0 ) {
-				if(finished != null) finished();
+			if (time < 0) {
+				if (finished != null)
+					finished();
 				return true;
 			}
 			everyFrame(dt, time);
@@ -69,7 +70,7 @@ class WaitEvent {
 		var i = 0;
 		while (i < updateList.length) {
 			var f = updateList[i];
-			if(f(dt))
+			if (f(dt))
 				updateList.remove(f);
 			else
 				++i;

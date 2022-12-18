@@ -8,6 +8,8 @@ package h3d.mat;
 	var BeforeTonemapping = "BeforeTonemapping";
 	var AfterTonemapping = "AfterTonemapping";
 	var Distortion = "Distortion";
+	var DecalPass = "DecalPass";
+	var TerrainPass = "TerrainPass";
 }
 
 @:enum abstract PbrBlend(String) {
@@ -28,6 +30,12 @@ package h3d.mat;
 	var Never = "Never";
 	var Equal = "Equal";
 	var NotEqual= "NotEqual";
+}
+
+@:enum abstract PbrDepthWrite(String) {
+	var Default = "Default";
+	var On = "On";
+	var Off = "Off";
 }
 
 @:enum abstract PbrStencilOp(String) {
@@ -65,6 +73,7 @@ typedef PbrProps = {
 	var shadows : Bool;
 	var culling : PbrCullingMode;
 	var depthTest : PbrDepthTest;
+	@:optional var depthWrite : PbrDepthWrite;
 	var colorMask : Int;
 	@:optional var alphaKill : Bool;
 	@:optional var emissive : Float;
@@ -79,6 +88,8 @@ typedef PbrProps = {
 	@:optional var stencilValue : Int;
 	@:optional var stencilWriteMask : Int;
 	@:optional var stencilReadMask : Int;
+
+	@:optional var drawOrder : String;
 }
 
 class PbrMaterial extends Material {
@@ -86,7 +97,11 @@ class PbrMaterial extends Material {
 	override function set_blendMode(b:BlendMode) {
 		if( mainPass != null ) {
 			mainPass.setBlendMode(b);
-			mainPass.depthWrite = b == None;
+			var dwrite = props != null ? (props:PbrProps).depthWrite : null;
+			if(dwrite != null && dwrite != Default)
+				mainPass.depthWrite = dwrite == On;
+			else
+				mainPass.depthWrite = b == None;
 			var am = mainPass.getShader(h3d.shader.pbr.AlphaMultiply);
 			if( b == AlphaMultiply ) {
 				if( am == null ) {
@@ -196,7 +211,7 @@ class PbrMaterial extends Material {
 		mainPass.enableLights = true;
 
 		// Backward compatibility
-		if(Std.is((props:Dynamic).culling, Bool))
+		if(Std.isOfType((props:Dynamic).culling, Bool))
 			props.culling = (props:Dynamic).culling ? Back : None;
 		#if editor
 		if( (props:Dynamic).colorMask == null ) props.colorMask = 15;
@@ -215,6 +230,10 @@ class PbrMaterial extends Material {
 			Reflect.deleteField(props, "stencilPassOp");
 			Reflect.deleteField(props, "stencilCompare");
 		}
+		if( props.drawOrder == "0" )
+			Reflect.deleteField(props,"drawOrder");
+		if( props.depthWrite == Default )
+		 	Reflect.deleteField(props, "depthWrite");
 		#end
 	}
 
@@ -260,6 +279,18 @@ class PbrMaterial extends Material {
 				sv = new h3d.shader.pbr.StrengthValues();
 				mainPass.addShader(sv);
 			}
+		case DecalPass:
+			if (props.emissive != 0)
+				mainPass.setPassName("emissiveDecal");
+			else
+				mainPass.setPassName("decal");
+			var sv = mainPass.getShader(h3d.shader.pbr.StrengthValues);
+			if( sv == null ) {
+				sv = new h3d.shader.pbr.StrengthValues();
+				mainPass.addShader(sv);
+			}
+		case TerrainPass:
+			mainPass.setPassName("terrain");
 		}
 
 		// Blend modes
@@ -310,6 +341,9 @@ class PbrMaterial extends Material {
 			default: Less;
 		}
 
+		if(props.depthWrite != null && props.depthWrite != Default)
+		 	mainPass.depthWrite = props.depthWrite == On;
+
 		// Get values from specular texture
 		var emit = props.emissive == null ? 0 : props.emissive;
 		var tex = mainPass.getShader(h3d.shader.pbr.PropsTexture);
@@ -339,6 +373,15 @@ class PbrMaterial extends Material {
 		setColorMask();
 
 		setStencil();
+
+		var p = passes;
+		while ( p != null ) {
+			if ( props.drawOrder == null )
+				mainPass.layer = 0;
+			else
+				mainPass.layer = Std.parseInt(props.drawOrder);
+			p = p.nextPass;
+		}
 	}
 
 	function setColorMask() {
@@ -450,6 +493,7 @@ class PbrMaterial extends Material {
 	#if editor
 	override function editProps() {
 		var props : PbrProps = props;
+		var layers : Array< { name : String, value : Int }> = hide.Ide.inst.currentConfig.get("material.drawOrder", []);
 		return new js.jquery.JQuery('
 			<dl>
 				<dt>Mode</dt>
@@ -462,6 +506,8 @@ class PbrMaterial extends Material {
 						<option value="Overlay">Overlay</option>
 						<option value="Distortion">Distortion</option>
 						<option value="Decal">Decal</option>
+						<option value="DecalPass">DecalPass</option>
+						<option value="TerrainPass">TerrainPass</option>
 					</select>
 				</dd>
 				<dt>Blend</dt>
@@ -488,6 +534,15 @@ class PbrMaterial extends Material {
 						<option value="NotEqual">NotEqual</option>
 					</select>
 				</dd>
+				<dt>Depth Write</dt>
+				<dd>
+					<select field="depthWrite">
+						<option value="" selected disabled hidden>Default</option>
+						<option value="Default">Default</option>
+						<option value="On">On</option>
+						<option value="Off">Off</option>
+					</select>
+				</dd>
 				<dt>Emissive</dt><dd><input type="range" min="0" max="10" field="emissive"/></dd>
 				<dt>Parallax</dt><dd><input type="range" min="0" max="1" field="parallax"/></dd>
 				<dt>Shadows</dt><dd><input type="checkbox" field="shadows"/></dd>
@@ -502,6 +557,13 @@ class PbrMaterial extends Material {
 				</dd>
 				<dt>AlphaKill</dt><dd><input type="checkbox" field="alphaKill"/></dd>
 				<dt>Wrap</dt><dd><input type="checkbox" field="textureWrap"/></dd>
+				<dt>Draw Order</dt>
+				<dd>
+					<select field="drawOrder">
+						<option value="" selected disabled hidden>Default</option>
+						${[for( i in 0...layers.length ) '<option value="${layers[i].value}">${layers[i].name}</option>'].join("")}
+					</select>
+				</dd>
 			</dl>
 		');
 	}

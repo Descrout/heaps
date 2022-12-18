@@ -285,7 +285,9 @@ class GlDriver extends Driver {
 		var s = gl.createShader(type);
 		if( shader.code == null ){
 			shader.code = glout.run(shader.data);
+			#if !heaps_compact_mem
 			shader.data.funs = null;
+			#end
 		}
 		gl.shaderSource(s, shader.code);
 		gl.compileShader(s);
@@ -1601,17 +1603,16 @@ class GlDriver extends Driver {
 
 	override function init( onCreate : Bool -> Void, forceSoftware = false ) {
 		#if js
-		var ready = false;
 		// wait until all assets have properly load
 		if( js.Browser.document.readyState == 'complete' )
 			haxe.Timer.delay(onCreate.bind(false), 1);
-		else
-			js.Browser.window.addEventListener("load", function(_) {
-				if( !ready ) {
-					ready = true;
-					onCreate(false);
-				}
-			});
+		else {
+			function onLoad() {
+				js.Browser.window.removeEventListener("load", onLoad);
+				onCreate(false);
+			}
+			js.Browser.window.addEventListener("load", onLoad);
+		}
 		#else
 		haxe.Timer.delay(onCreate.bind(false), 1);
 		#end

@@ -17,10 +17,12 @@ class ModelCache {
 	}
 
 	public function dispose() {
-		anims = new Map();
-		models = new Map();
+		for( m in models )
+			m.lib.dispose();
 		for( t in textures )
 			t.dispose();
+		anims = new Map();
+		models = new Map();
 		textures = new Map();
 	}
 
@@ -73,7 +75,7 @@ class ModelCache {
 		return m.col;
 	}
 
-	public function loadTexture( model : hxd.res.Model, texturePath ) : h3d.mat.Texture {
+	public function loadTexture( model : hxd.res.Model, texturePath, async = false ) : h3d.mat.Texture {
 		var fullPath = texturePath;
 		if(model != null)
 			fullPath = model.entry.path + "@" + fullPath;
@@ -107,8 +109,9 @@ class ModelCache {
 				throw error;
 			}
 		}
-
-		t = tres.toTexture();
+		var img = tres.toImage();
+		img.enableAsyncLoading = async;
+		t = img.toTexture();
 		textures.set(fullPath, t);
 		return t;
 	}

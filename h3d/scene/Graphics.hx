@@ -68,8 +68,10 @@ class Graphics extends Mesh {
 		if( is3D == v )
 			return v;
 		if( v ) {
+			material.texture = h3d.mat.Texture.fromColor(-1);
 			material.mainPass.removeShader(lineShader);
 		} else {
+			material.texture = null;
 			material.mainPass.addShader(lineShader);
 		}
 		bprim.clear();
@@ -219,6 +221,13 @@ class Graphics extends Mesh {
 			if( !is3D ) lineShader.width = lineSize;
 		}
 		setColor(color, alpha);
+	}
+
+	public function setColorF( r : Float, g : Float, b : Float, a : Float = 1.) {
+		curA = a;
+		curR = r;
+		curG = g;
+		curB = b;
 	}
 
 	public function setColor( color : Int, alpha = 1. ) {

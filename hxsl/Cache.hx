@@ -4,8 +4,32 @@ import hxsl.RuntimeShader;
 
 class SearchMap {
 	public var linked : RuntimeShader;
-	public var next : Map<Int,SearchMap>;
-	public function new() {
+	var nexts : Array<SearchMap> = [];
+	var minId = 0;
+
+	public function new() { }
+
+	public function set(id: Int, s: SearchMap) {
+		if(minId == 0) {
+			minId = id;
+			nexts = [s];
+			return;
+		}
+
+		var offset = id - minId;
+		if(offset < 0) {
+			var n = [];
+			for(i in 0...nexts.length)
+				n[i - offset] = nexts[i];  // shift indices
+			nexts = n;
+			minId += offset;
+			offset = 0;
+		}
+		nexts[offset] = s;
+	}
+
+	inline public function get(id: Int) {
+		return nexts[id - minId];
 	}
 }
 
@@ -155,11 +179,10 @@ class Cache {
 		var c = linkCache;
 		for( s in shaders ) {
 			var i = @:privateAccess s.instance;
-			if( c.next == null ) c.next = new Map();
-			var cs = c.next.get(i.id);
+			var cs = c.get(i.id);
 			if( cs == null ) {
 				cs = new SearchMap();
-				c.next.set(i.id, cs);
+				c.set(i.id, cs);
 			}
 			c = cs;
 		}
@@ -493,6 +516,12 @@ class Cache {
 		}
 
 		var pos = null;
+
+		var hasOffset = declVar("Batch_HasOffset",TBool,Param);
+		var inputOffset = declVar("Batch_Start",TFloat,Input);
+		hasOffset.qualifiers = [Const()];
+		inputOffset.qualifiers = [PerInstance(1)];
+
 		var vcount = declVar("Batch_Count",TInt,Param);
 		var vbuffer = declVar("Batch_Buffer",TBuffer(TVec(4,VFloat),SVar(vcount)),Param);
 		var voffset = declVar("Batch_Offset", TInt, Local);
@@ -504,7 +533,7 @@ class Cache {
 
 		s.data = {
 			name : "batchShader_"+id,
-			vars : [vcount,vbuffer,voffset],
+			vars : [vcount,hasOffset,vbuffer,voffset,inputOffset],
 			funs : [],
 		};
 
@@ -689,10 +718,30 @@ class Cache {
 			p = p.next;
 		}
 
-		exprs.unshift({
+
+		var inits = [];
+
+		inits.push({
 			p : pos,
-			e : TBinop(OpAssign, eoffset, { p : pos, t : TInt, e : TBinop(OpMult,{ e : TGlobal(InstanceID), t : TInt, p : pos },{ e : TConst(CInt(stride)), p : pos, t : TInt }) }),
+			e : TBinop(OpAssign, eoffset, { e : TGlobal(InstanceID), t : TInt, p : pos }),
 			t : TVoid,
+		});
+
+		// when Batch_hasOffset is set to true, have InstanceID somewhat emulate DrawID
+		inits.push({
+			p : pos,
+			e : TIf({ e : TVar(hasOffset), t : TBool, p : pos },{
+				p : pos,
+				e : TBinop(OpAssignOp(OpAdd), eoffset, { e : TCall({ e : TGlobal(ToInt), t : TVoid, p : pos },[{ p : pos, t : TFloat, e : TVar(inputOffset) }]), t : TInt, p : pos }),
+				t : TVoid,
+			}, null),
+			t : TVoid,
+		});
+
+		inits.push({
+			p : pos,
+			t : TInt,
+			e : TBinop(OpAssignOp(OpMult),eoffset,{ e : TConst(CInt(stride)), t : TInt, p : pos }),
 		});
 
 		var fv : TVar = declVar("init",TFun([]), Function);
@@ -701,11 +750,13 @@ class Cache {
 			ref : fv,
 			args : [],
 			ret : TVoid,
-			expr : { e : TBlock(exprs), p : pos, t : TVoid },
+			expr : { e : TBlock(inits.concat(exprs)), p : pos, t : TVoid },
 		};
 		s.data.funs.push(f);
-		s.consts = new SharedShader.ShaderConst(vcount,0,countBits);
+		s.consts = new SharedShader.ShaderConst(vcount,1,countBits+1);
 		s.consts.globalId = 0;
+		s.consts.next = new SharedShader.ShaderConst(hasOffset,0,1);
+		s.consts.next.globalId = 0;
 
 		return { shader : s, params : params, size : stride };
 	}
